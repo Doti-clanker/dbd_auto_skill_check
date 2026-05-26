@@ -4,9 +4,7 @@ import serial
 import serial.tools.list_ports
 from time import time, sleep
 import gradio as gr
-import pygetwindow as gw
 import pyautogui
-
 from dbd.AI_model import AI_model
 from dbd.utils.directkeys import PressKey, ReleaseKey, SPACE
 from dbd.utils.monitoring_mss import Monitoring_mss
@@ -29,19 +27,18 @@ def get_available_ports():
     """Get list of available COM ports"""
     ports = serial.tools.list_ports.comports()
     port_dict = {}
-    
+   
     for port in ports:
         port_dict[port.device] = f"{port.device}"
-    
+   
     common_ports = ["COM1", "COM3", "COM4", "COM5", "COM6", "/dev/ttyUSB0", "/dev/ttyUSB1"]
     for port in common_ports:
         if port not in port_dict:
             port_dict[port] = port
-    
+   
     return port_dict if port_dict else {"": "No ports found"}
 
 def load_config():
-    """Load config from JSON file"""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
@@ -51,7 +48,6 @@ def load_config():
     return None
 
 def save_config(device, capture_region_size, confidence_threshold, hit_ante, cpu_stress, use_rp2350, rp2350_port, input_delay):
-    """Save config to JSON file"""
     config = {
         "device": device,
         "capture_region_size": capture_region_size,
@@ -69,42 +65,17 @@ def save_config(device, capture_region_size, confidence_threshold, hit_ante, cpu
     except Exception as e:
         return f"✗ Error saving config: {e}"
 
-def is_game_active():
-    """Check if Dead by Daylight window is active"""
-    try:
-        active_window = gw.getActiveWindow()
-        if active_window and ("dead by daylight" in active_window.title.lower() or "dbd" in active_window.title.lower()):
-            return True
-        return False
-    except:
-        return False
-
-def focus_game():
-    """Try to bring DBD window to focus"""
-    try:
-        dbd_windows = gw.getWindowsWithTitle("Dead by Daylight")
-        if not dbd_windows:
-            dbd_windows = gw.getWindowsWithTitle("dbd")
-        if dbd_windows:
-            dbd_windows[0].activate()
-            sleep(0.1)
-            return True
-    except:
-        pass
-    return False
-
 def connect_rp2350(port):
-    """Connect to RP2350 on specified port"""
     global rp2350_serial, rp2350_connected
-    
+   
     if " - " in str(port):
         port = str(port).split(" - ")[0]
-    
+   
     port = str(port).strip()
     if not port or port == "":
         print("[RP2350] No port specified")
         return False
-    
+   
     try:
         if rp2350_serial:
             try:
@@ -122,7 +93,6 @@ def connect_rp2350(port):
         return False
 
 def disconnect_rp2350():
-    """Disconnect from RP2350"""
     global rp2350_serial, rp2350_connected
     try:
         if rp2350_serial:
@@ -134,19 +104,15 @@ def disconnect_rp2350():
 def press_space_rp2350(input_delay=0.005):
     """Send spacebar press command to RP2350"""
     global rp2350_serial, rp2350_connected
-    
-    if not is_game_active():
-        focus_game()
-        sleep(0.1)
-    
+   
     if not rp2350_connected or not rp2350_serial:
         return False
-    
+   
     try:
         rp2350_serial.write(b"HIT\n")
         rp2350_serial.flush()
         sleep(input_delay)
-        
+       
         if rp2350_serial.in_waiting > 0:
             response = rp2350_serial.read(100)
             if b"ACK" in response:
@@ -158,6 +124,7 @@ def press_space_rp2350(input_delay=0.005):
         return False
 
 ai_model = None
+
 def cleanup():
     global ai_model
     disconnect_rp2350()
@@ -166,24 +133,17 @@ def cleanup():
         ai_model = None
     return 0.
 
-
 def monitor(ai_model_path, device, monitoring_str, monitor_id, hit_ante, nb_cpu_threads, use_rp2350, rp2350_port, confidence_threshold, capture_region_size, input_delay):
     if ai_model_path is None or not os.path.exists(ai_model_path):
         raise gr.Error("Invalid AI model file", duration=0)
-
     if device is None:
         raise gr.Error("Invalid device option")
-
     if isinstance(monitor_id, (list, tuple)):
         monitor_id = monitor_id[1] if len(monitor_id) > 1 else monitor_id[0]
-
     if monitor_id is None or monitor_id == "":
         raise gr.Error("Invalid monitor option")
 
     use_gpu = (device == devices[1])
-
-    if not is_game_active():
-        gr.Warning("⚠️ DBD not focused! Please click on the game window.")
 
     if use_rp2350 and rp2350_port:
         if not connect_rp2350(rp2350_port):
@@ -212,7 +172,7 @@ def monitor(ai_model_path, device, monitoring_str, monitor_id, hit_ante, nb_cpu_
         gr.Info(f"✓ CPU: {nb_cpu_threads} threads")
 
     input_method = "RP2350" if (use_rp2350 and rp2350_connected) else "Software Keyboard"
-    gr.Info(f"Input: {input_method} | Delay: {input_delay}ms | Game Focus: {'✓' if is_game_active() else '✗'}")
+    gr.Info(f"Input: {input_method} | Delay: {input_delay}ms")
 
     t0 = time()
     nb_frames = 0
@@ -220,30 +180,22 @@ def monitor(ai_model_path, device, monitoring_str, monitor_id, hit_ante, nb_cpu_
 
     try:
         while True:
-            if use_rp2350 and nb_frames % 60 == 0:
-                if not is_game_active():
-                    focus_game()
-
             frame_np = ai_model.grab_screenshot()
             nb_frames += 1
-
             pred, desc, probs, should_hit = ai_model.predict(frame_np)
             max_confidence = max(probs.values())
 
             if should_hit and max_confidence >= confidence_threshold:
                 if pred == 2 and hit_ante > 0:
                     sleep(hit_ante * 0.001)
-
+                
                 if use_rp2350:
-                    if is_game_active() or focus_game():
-                        press_space_rp2350(input_delay / 1000.0)
-                    else:
-                        print("[WARNING] Could not focus game")
+                    press_space_rp2350(input_delay / 1000.0)
                 else:
                     PressKey(SPACE)
                     sleep(0.005)
                     ReleaseKey(SPACE)
-
+                
                 hits += 1
                 yield gr.skip(), frame_np, probs
                 sleep(0.5)
@@ -264,21 +216,23 @@ def monitor(ai_model_path, device, monitoring_str, monitor_id, hit_ante, nb_cpu_
         print(f"Monitoring stopped. Total hits: {hits}")
         disconnect_rp2350()
 
+# ==================== UI SETUP ====================
 
 if __name__ == "__main__":
     models_folder = "models"
-
-    fps_info = "AI inference speed"
     devices = ["CPU", "GPU"]
     cpu_choices = [("Low (2)", 2), ("Normal (4)", 4), ("High (6)", 6), ("Max (8)", 8)]
     capture_choices = [("Small (224)", 224), ("Medium (320)", 320), ("Large (416)", 416)]
     delay_choices = [("1ms", 1), ("5ms", 5), ("10ms", 10), ("15ms", 15), ("20ms", 20), ("30ms", 30), ("45ms", 45)]
 
-    model_files = [(f, f'{models_folder}/{f}') for f in os.listdir(f"{models_folder}/") if f.endswith(".onnx") or f.endswith(".trt")]
+    model_files = [(f, f'{models_folder}/{f}') for f in os.listdir(f"{models_folder}/") 
+                   if f.endswith(".onnx") or f.endswith(".trt")]
+    
     if len(model_files) == 0:
         raise gr.Error(f"No AI model found in {models_folder}/", duration=0)
 
     monitoring_choices = ["mss", "bettercam"] if bettercam_ok else ["mss"]
+
     def switch_monitoring_cb(monitoring_str):
         if monitoring_str == "bettercam" and bettercam_ok:
             monitor_choices = Monitoring_bettercam.get_monitors_info()
@@ -287,11 +241,9 @@ if __name__ == "__main__":
         return gr.update(choices=monitor_choices, value=None), None
 
     monitor_choices = Monitoring_mss.get_monitors_info()
-
     rp2350_ports = get_available_ports()
     default_port = list(rp2350_ports.keys())[0] if rp2350_ports else ""
 
-    # Load config
     saved_config = load_config()
     default_device = saved_config.get("device", devices[1]) if saved_config else devices[1]
     default_capture = saved_config.get("capture_region_size", 320) if saved_config else 320
@@ -308,6 +260,7 @@ if __name__ == "__main__":
 
         with gr.Row():
             with gr.Column(variant="panel"):
+                # ... (UI code remains the same)
                 with gr.Column(variant="panel"):
                     gr.Markdown("### 🤖 AI Model")
                     ai_model_path = gr.Dropdown(choices=model_files, value=model_files[0][1], label="AI Model")
@@ -315,31 +268,24 @@ if __name__ == "__main__":
                     with gr.Row():
                         monitoring_str = gr.Dropdown(choices=monitoring_choices, value=monitoring_choices[0], label="Capture Method")
                         monitor_id = gr.Dropdown(choices=monitor_choices, value=monitor_choices[0][1], label="Monitor")
-                
+               
                 with gr.Column(variant="panel"):
                     gr.Markdown("### ⚙️ Settings")
-                    capture_region_size = gr.Radio(
-                        label="Capture Size",
-                        choices=capture_choices,
-                        value=default_capture,
-                    )
-                    confidence_threshold = gr.Slider(
-                        minimum=0.1, maximum=1.0, step=0.05, value=default_confidence,
-                        label="Confidence Threshold",
-                    )
+                    capture_region_size = gr.Radio(label="Capture Size", choices=capture_choices, value=default_capture)
+                    confidence_threshold = gr.Slider(minimum=0.1, maximum=1.0, step=0.05, value=default_confidence, label="Confidence Threshold")
                     hit_ante = gr.Slider(minimum=0, maximum=225, step=1, value=default_hit_ante, label="Hit Delay (ms)")
                     cpu_stress = gr.Radio(label="CPU Threads", choices=cpu_choices, value=default_cpu_stress)
-                
+               
                 with gr.Column(variant="panel"):
                     gr.Markdown("### 🎮 RP2350 Hardware")
                     use_rp2350 = gr.Checkbox(value=default_use_rp2350, label="✓ Enable RP2350")
                     rp2350_port = gr.Dropdown(choices=rp2350_ports, value=default_rp2350_port, label="COM Port", allow_custom_value=True)
                     input_delay = gr.Radio(label="Input Delay", choices=delay_choices, value=default_input_delay)
-                
+               
                 with gr.Column():
                     run_button = gr.Button("▶ START", variant="primary", size="lg")
                     stop_button = gr.Button("⏹ STOP", variant="stop", size="lg")
-                
+               
                 with gr.Column(variant="panel"):
                     gr.Markdown("### 💾 Config")
                     save_config_button = gr.Button("💾 Save Config", variant="secondary")
@@ -350,7 +296,6 @@ if __name__ == "__main__":
                 image_visu = gr.Image(label="Last Skill Check", height=224, interactive=False)
                 probs = gr.Label(label="Detection")
 
-        # Save config button action
         save_config_button.click(
             fn=lambda d, cs, ct, ha, cpu, ur, rp, id: save_config(d, cs, ct, ha, cpu, ur, rp, id),
             inputs=[device, capture_region_size, confidence_threshold, hit_ante, cpu_stress, use_rp2350, rp2350_port, input_delay],
@@ -358,7 +303,7 @@ if __name__ == "__main__":
         )
 
         monitoring = run_button.click(
-            fn=monitor, 
+            fn=monitor,
             inputs=[ai_model_path, device, monitoring_str, monitor_id, hit_ante, cpu_stress, use_rp2350, rp2350_port, confidence_threshold, capture_region_size, input_delay],
             outputs=[fps, image_visu, probs]
         )
